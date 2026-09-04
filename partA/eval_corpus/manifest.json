@@ -1,0 +1,62 @@
+{
+  "source": "FLORES-200 dev split (Meta AI NLLB team, 2022)",
+  "url": "https://dl.fbaipublicfiles.com/nllb/flores200_dataset.tar.gz",
+  "domain": "wikipedia-style sentences, professionally translated (news/wiki topics)",
+  "preprocessing": [
+    "strip() each line; drop empty lines",
+    "unicodedata NFC normalization (measured: NOT a no-op, see nfc_changed_lines)",
+    "no lowercasing / no dedup / no punctuation changes (keeps parallel alignment)"
+  ],
+  "languages": {
+    "eng": {
+      "flores_code": "eng_Latn",
+      "sentences": 997,
+      "sha256_16": "65df1e8b38702eaf",
+      "nfc_changed_lines": 0,
+      "lines_already_nfc_in_raw_flores": 997
+    },
+    "hin": {
+      "flores_code": "hin_Deva",
+      "sentences": 997,
+      "sha256_16": "fe8410fc6754ca98",
+      "nfc_changed_lines": 90,
+      "lines_already_nfc_in_raw_flores": 907
+    },
+    "mar": {
+      "flores_code": "mar_Deva",
+      "sentences": 997,
+      "sha256_16": "2ef3b1a241b5500b",
+      "nfc_changed_lines": 0,
+      "lines_already_nfc_in_raw_flores": 997
+    },
+    "ben": {
+      "flores_code": "ben_Beng",
+      "sentences": 997,
+      "sha256_16": "aa1576b50a1fa504",
+      "nfc_changed_lines": 586,
+      "lines_already_nfc_in_raw_flores": 411
+    },
+    "kan": {
+      "flores_code": "kan_Knda",
+      "sentences": 997,
+      "sha256_16": "6edeed351ed33734",
+      "nfc_changed_lines": 10,
+      "lines_already_nfc_in_raw_flores": 987
+    },
+    "tam": {
+      "flores_code": "tam_Taml",
+      "sentences": 997,
+      "sha256_16": "e9e1673cd3e2d3ae",
+      "nfc_changed_lines": 2,
+      "lines_already_nfc_in_raw_flores": 995
+    },
+    "tel": {
+      "flores_code": "tel_Telu",
+      "sentences": 997,
+      "sha256_16": "3adee51c06155665",
+      "nfc_changed_lines": 3,
+      "lines_already_nfc_in_raw_flores": 994
+    }
+  },
+  "sentences_per_language": 997
+}

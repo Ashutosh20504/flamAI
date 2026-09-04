@@ -1,0 +1,102 @@
+==============================================================================
+B1. KV-cache bytes per token and max concurrent 4096-token sequences
+==============================================================================
+a) KV bytes/token = 2 (K+V) x 28 layers x 8 kv-heads x 128 head_dim x 2 B (fp16)
+   = 57,344 elements x 2 B = 114,688 B = 112 KiB per token
+
+b) VRAM budget  = 24.0 GB x 0.92 = 22.08 GB
+   weights      = 4.2e9 x 2 B = 8.40 GB
+   overhead     = 1.6 GB
+   KV pool      = 22.08 - 8.40 - 1.6 = 12.08 GB = 12,080,000,000 B
+   token capacity = 12,080,000,000 / 114,688 = 105,329 tokens
+   max concurrent 4096-token sequences = floor(105,329/4096) = **25 sequences**
+
+Log check -- predicted peak KV utilization vs logged kv_cache_util
+batch  prompt   gen | pred util  logged preempted
+    1     512   256 |      0.01    0.01         0
+    2     512   256 |      0.01    0.01         0
+    4     512   256 |      0.03    0.03         0
+    8     512   256 |      0.06    0.06         0
+   16     512   256 |      0.12    0.12         0
+   32     512   256 |      0.23    0.23         0
+   64     512   256 |      0.47    0.47         0
+    4    3584   512 |      0.16    0.16         0
+    8    3584   512 |      0.31    0.31         0
+   16    3584   512 |      0.62    0.62         0
+   24    3584   512 |      0.93    0.93         0
+   32    3584   512 |      0.97    0.97         7  <- needs preemption
+   48    3584   512 |      0.97    0.97        23  <- needs preemption
+All preemption-free rows match the prediction to 0.01; the first two rows over
+capacity (batch 32, 48 @ 3584+512) are exactly the rows with preemptions.
+
+==============================================================================
+B2. The long-context anomaly: throughput FALLS from batch 24 to 32 to 48
+==============================================================================
+batch   wall_s reported_tok_s decode goodput  kv_util preempted
+    4    28.98          565.4           70.7     0.16         0
+    8    36.30          902.6          112.8     0.31         0
+   16    49.97         1311.4          163.9     0.62         0
+   24    61.16         1607.4          200.9     0.93         0
+   32    94.71         1384.0          173.0     0.97         7
+   48   151.41         1298.5          162.3     0.97        23
+
+Mechanism: KV need at batch 32 = 32x4096x114,688 B = 15.03 GB > pool; batch 48 = 22.55 GB >> pool.
+Scheduler preempts running sequences (7 and 23 rows) and, in vLLM's default
+recompute mode, throws away their KV and re-prefills them from scratch ->
+duplicate prefill work + decode stalls. Effective concurrency is capped at ~26
+sequences no matter what batch size you submit.
+
+Preemption-free expectation: wall clock should scale ~ batch (2x24 = 48) -> ~122 s;
+actual batch-48 wall = 151.4 s, i.e. ~24% of the run is preemption overhead.
+
+Proposed change (pick one; both are config-only):
+  1) cap max_num_seqs at 24 for 4k-context traffic (matches real capacity);
+  2) max_model_len 2048 -> capacity floor(12.08e9/(2048x114,688)) = 51 seqs,
+     batch 48 fits with zero preemptions (needs request-length triage).
+Predicted effect of (1) on the batch-48 row: wall ~122 s (2 waves x 61.2 s),
+total tok/s ~1,607 (the batch-24 plateau, +24% vs the 1,298 measured),
+decode goodput ~201 tok/s (vs 163 measured), preemptions 23 -> 0.
+
+==============================================================================
+B3. The misread column: reported_tok_s counts PROMPT+COMPLETION tokens
+==============================================================================
+Reconstruct every row:  n x (prompt_len + gen_len) / wall_clock_s  vs reported
+batch  prompt   gen | reconstructed  reported  rel err
+    1     512   256 |          70.2      70.2    0.00%
+    2     512   256 |         132.3     132.3    0.00%
+    4     512   256 |         261.0     261.0    0.00%
+    8     512   256 |         495.5     495.4    0.02%
+   16     512   256 |         883.4     883.2    0.02%
+   32     512   256 |        1489.5    1489.6    0.01%
+   64     512   256 |        2267.2    2267.3    0.01%
+    4    3584   512 |         565.4     565.4    0.01%
+    8    3584   512 |         902.7     902.6    0.01%
+   16    3584   512 |        1311.5    1311.4    0.01%
+   24    3584   512 |        1607.3    1607.4    0.00%
+   32    3584   512 |        1383.9    1384.0    0.01%
+   48    3584   512 |        1298.5    1298.5    0.00%
+max relative error across all 13 rows: 0.02% -> reported_tok_s is
+TOTAL token throughput (prefill-dominated), not generated-token throughput.
+
+Honest goodput of the batch-24 long-prompt row, two independent ways:
+  (i) generated tokens / wall clock   = 24 x 512 / 61.16 s        = 200.9 tok/s
+  (ii) decode-phase rate from ITL     = 24 x (1000/96.07 ms)      = 249.8 tok/s
+  consistency: (ii) implies decode time = 12,288/249.8 = 49.2 s -> prefill+overhead 12.0 s -> prefill rate 7,185 tok/s
+  (= 50% of L4 fp16 peak for a 4.2B model -- plausible)
+
+What the report should have said: longer prompts LOWER user-visible goodput
+(short b16: 294.5 tok/s decoded vs long b24: 200.9 tok/s,
+ITL 48.3 -> 96.1 ms). 'Batch 48 -> ~3200 tok/s' is doubly
+wrong: 3200 was never measured (best observed total = 2,267 on the short sweep),
+and the long sweep *degrades* past batch 24 (b48 measured 1,298 total / 162.3 decode tok/s).
+
+==============================================================================
+B4. The one counter to pull
+==============================================================================
+vllm:num_preemptions_total (the engine's preemption counter; the log's
+`preempted_seqs` column is its per-run value). Expected value: exactly 0 for
+any concurrency <= ~25 at 4096-token sequences, then a step to 7 (batch 32)
+and 23 (batch 48) -- precisely the pattern in the log. Companion gauge
+vllm:gpu_cache_usage_perc pinned at ~0.97 while preemptions climb would
+confirm KV exhaustion (not e.g. CUDA-graph or CPU scheduling stalls) as the
+mechanism behind the batch>24 throughput drop.
