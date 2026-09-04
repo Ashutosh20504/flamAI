@@ -1,4 +1,4 @@
-# your-submission — audit of REPORT_v0
+# Submission — audit of REPORT_v0
 
 Entry points (Python 3.11+; deps: `tiktoken`, `transformers`, `sentencepiece`,
 `protobuf`, `regex`, `numpy` — no torch needed, only tokenizer weights are
