@@ -4,7 +4,7 @@ Honest account of AI's role in this submission.
 
 ## Where AI did the work
 
-An AI coding agent (ZCode, GLM model) drove this audit end-to-end in one
+An AI coding agent drove this audit end-to-end in one
 working session at my direction: environment setup, locating and downloading
 FLORES-200, writing the experiment scripts and the corrected-analysis
 pipeline, and drafting the Part B/C memos and this notebook. The compute is
